@@ -13,6 +13,23 @@ const Attendance =
 
 const clean = (v) => String(v || '').trim();
 
+const MAX_PAST_DAYS = 30; // how far back a date may be; keep the same as the frontend
+
+function dateProblem(d, checkOldest) {
+  if (isNaN(d)) return 'Invalid date';
+  const key = d.toISOString().slice(0, 10);
+  const DAY = 24 * 3600 * 1000;
+  // allow up to 14 hours ahead so users east of UTC (like the Philippines) can pick their "today"
+  const newest = new Date(Date.now() + 14 * 3600 * 1000).toISOString().slice(0, 10);
+  if (key > newest) return 'Dates in the future are not allowed';
+  if (checkOldest) {
+    // one extra day of slack for time zone differences
+    const oldest = new Date(Date.now() - (MAX_PAST_DAYS + 1) * DAY).toISOString().slice(0, 10);
+    if (key < oldest) return 'That date is more than ' + MAX_PAST_DAYS + ' days ago';
+  }
+  return null;
+}
+
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
@@ -39,6 +56,9 @@ module.exports = async (req, res) => {
           error: 'studentName, subjectName, course and a valid date are required'
         });
       }
+      const problem = dateProblem(when, true);
+      if (problem) return res.status(400).json({ error: problem });
+
       const updated = await Attendance.findOneAndUpdate(
         {
           studentName: clean(studentName),
@@ -70,6 +90,11 @@ module.exports = async (req, res) => {
       if (!dates || dates.some(d => isNaN(d))) {
         return res.status(400).json({ error: 'dates must be a list of valid dates' });
       }
+      // Future dates are never allowed. The "too old" check is skipped here so
+      // editing a name does not fail because of older existing dates.
+      const badDate = dates.map(d => dateProblem(d, false)).find(Boolean);
+      if (badDate) return res.status(400).json({ error: badDate });
+
       const unique = [...new Map(dates.map(d => [d.getTime(), d])).values()]
         .sort((a, b) => a - b);
 
